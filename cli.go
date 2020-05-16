@@ -40,7 +40,7 @@ func (h *CLIHandler) Auth(c *api.Client, m map[string]string) (*api.Secret, erro
 	signal.Notify(sigintCh, os.Interrupt)
 	defer signal.Stop(sigintCh)
 
-	doneCh := make(chan loginResp)
+	doneCh := make(chan loginResp, 2)
 
 	mount, ok := m["mount"]
 	if !ok {
@@ -80,7 +80,11 @@ func (h *CLIHandler) Auth(c *api.Client, m map[string]string) (*api.Secret, erro
 	}
 
 	// Set up callback handler
-	http.HandleFunc("/oidc/callback", callbackHandler(c, mount, clientNonce, doneCh))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/oidc/callback", callbackHandler(c, mount, clientNonce, doneCh))
+	srv := &http.Server{Handler: mux}
+	srv.SetKeepAlivesEnabled(false)
+	defer srv.Close()
 
 	listener, err := net.Listen("tcp", listenAddress+":"+port)
 	if err != nil {
@@ -96,7 +100,7 @@ func (h *CLIHandler) Auth(c *api.Client, m map[string]string) (*api.Secret, erro
 
 	// Start local server
 	go func() {
-		err := http.Serve(listener, nil)
+		err := srv.Serve(listener)
 		if err != nil && err != http.ErrServerClosed {
 			doneCh <- loginResp{nil, err}
 		}
