@@ -210,16 +210,24 @@ func (h *CLIHandler) Auth(c *api.Client, m map[string]string) (*api.Secret, erro
 			"state":        state,
 			"client_nonce": clientNonce,
 		}
-		pollUrl := fmt.Sprintf("auth/%s/oidc/poll", mount)
-		for {
-			time.Sleep(time.Duration(interval) * time.Second)
 
-			secret, err := c.Logical().Write(pollUrl, data)
-			if err == nil {
-				return secret, nil
-			}
-			if !strings.HasSuffix(err.Error(), "authorization_pending") {
-				return nil, err
+		pollUrl := fmt.Sprintf("auth/%s/oidc/poll", mount)
+		timeout := time.After(time.Duration(interval) * time.Second)
+
+		for {
+			select {
+			case <-sigintCh:
+				return nil, errors.New("Interrupted")
+			case <-timeout:
+				secret, err := c.Logical().Write(pollUrl, data)
+				if err == nil {
+					return secret, nil
+				}
+				if !strings.HasSuffix(err.Error(), "authorization_pending") {
+					return nil, err
+				}
+
+				timeout = time.After(time.Duration(interval) * time.Second)
 			}
 			// authorization is pending, try again
 		}
