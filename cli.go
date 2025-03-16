@@ -146,12 +146,12 @@ func (h *CLIHandler) Auth(c *api.Client, m map[string]string) (*api.Secret, erro
 		return nil, err
 	}
 
-	doneCh := make(chan loginResp)
-
+	var doneCh chan loginResp
 	var pollInterval string
 	var interval int
 	var state string
 	var listener net.Listener
+	var srv *http.Server
 
 	if secret != nil {
 		pollInterval, _ = secret.Data["poll_interval"].(string)
@@ -176,7 +176,12 @@ func (h *CLIHandler) Auth(c *api.Client, m map[string]string) (*api.Secret, erro
 			return nil, errors.New("poll_interval returned in client callback mode")
 		}
 		// Set up callback handler
-		http.HandleFunc("/oidc/callback", callbackHandler(c, mount, clientNonce, doneCh))
+		doneCh = make(chan loginResp, 2)
+		mux := http.NewServeMux()
+		mux.HandleFunc("/oidc/callback", callbackHandler(c, mount, clientNonce, doneCh))
+		srv = &http.Server{Handler: mux}
+		srv.SetKeepAlivesEnabled(false)
+		defer srv.Close()
 
 		listener, err = net.Listen("tcp", listenAddress+":"+port)
 		if err != nil {
@@ -221,7 +226,7 @@ func (h *CLIHandler) Auth(c *api.Client, m map[string]string) (*api.Secret, erro
 
 	// Start local server
 	go func() {
-		err := http.Serve(listener, nil)
+		err := srv.Serve(listener)
 		if err != nil && err != http.ErrServerClosed {
 			doneCh <- loginResp{nil, err}
 		}
